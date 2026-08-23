@@ -96,6 +96,19 @@ internal static class SelfTest
             return ((IPEndPoint)probe.LocalEndpoint).Port;
         }
 
+        // UDP の待受には必ずこちらを使う。
+        // <b>TCP で借りた番号を UDP に使い回さないこと。</b>Windows は動的ポート範囲の
+        // 一部をプロトコルごとに別々に予約しており（Hyper-V / WinNAT の excludedportrange）、
+        // TCP で空いている番号が UDP では WSAEACCES になる。GitHub のランナーは
+        // この予約が広く、TCP 由来の番号を渡した TFTP / syslog / Trap の検査が
+        // 「AccessDenied」で落ちた（手元の PC には予約が無いので通っていた）
+        static int FreeUdpPort()
+        {
+            using var probe = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+
+            return ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
+        }
+
         // 捨てたタスク(`_ = …Async()`)から出た例外は、GC がその Task を回収して
         // ファイナライザが走るまで UnobservedTaskException として上がってこない。
         // サーバを止めた直後などに呼んで、その場で確定させる（呼ばないと
@@ -2567,7 +2580,7 @@ internal static class SelfTest
             Directory.CreateDirectory(root);
 
             byte[] body = Encoding.UTF8.GetBytes("hostname RT02\nこんにちは\n");
-            int port = FreePort();
+            int port = FreeUdpPort();
 
             byte[] Exchange(System.Net.Sockets.UdpClient client, byte[] packet, IPEndPoint to, ref IPEndPoint? from)
             {
@@ -2683,7 +2696,7 @@ internal static class SelfTest
             // 解析そのものは Core の xUnit が固めているが、受信→解析→行にする
             // 結線はここでしか通らない。重大度を文字列に混ぜて潰した過去があるので、
             // 数値のまま届いているところまで見る。loopback のみ
-            int port = FreePort();
+            int port = FreeUdpPort();
 
             using var server = new Services.SyslogReceiver();
             server.Start(port);
@@ -2742,7 +2755,7 @@ internal static class SelfTest
         {
             // 組み立ては Core（SnmpCodec.BuildTrapV2）で xUnit が固めている。
             // ここで見たいのは受信→解析→文面にする結線。loopback のみ
-            int port = FreePort();
+            int port = FreeUdpPort();
 
             using var server = new Services.SnmpTrapReceiver();
             server.Start(port);
@@ -2789,12 +2802,22 @@ internal static class SelfTest
             var shell = closing.DataContext as ViewModels.ShellViewModel;
             Assert(shell is not null, "ShellViewModel が DataContext に居ない");
 
-            ViewModels.FileServerViewModel[] servers =
-                [shell!.Ftp, shell.Tftp, shell.Sftp, shell.Syslog, shell.SnmpTrap];
+            // ポートはプロトコルごとに借りる（TFTP / syslog / Trap は UDP）。
+            // TCP で借りた番号を渡すと、予約範囲の広い環境で AccessDenied になる
+            (ViewModels.FileServerViewModel Vm, bool Udp)[] servers =
+            [
+                (shell!.Ftp, false),
+                (shell.Tftp, true),
+                (shell.Sftp, false),
+                (shell.Syslog, true),
+                (shell.SnmpTrap, true),
+            ];
 
-            foreach (ViewModels.FileServerViewModel vm in servers)
+            foreach ((ViewModels.FileServerViewModel vm, bool udp) in servers)
             {
-                vm.Port = FreePort().ToString(System.Globalization.CultureInfo.InvariantCulture);
+                int port = udp ? FreeUdpPort() : FreePort();
+
+                vm.Port = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 vm.StartCommand.Execute(null);
                 Assert(vm.IsRunning, $"待受を開始できない: {vm.GetType().Name}（{vm.Status}）");
             }
@@ -2802,7 +2825,7 @@ internal static class SelfTest
             // 閉じる = OnClosing → Reset() → Dispose() という製品と同じ経路
             closing.Close();
 
-            foreach (ViewModels.FileServerViewModel vm in servers)
+            foreach ((ViewModels.FileServerViewModel vm, _) in servers)
                 Assert(!vm.IsRunning, $"閉じても待受が止まっていない: {vm.GetType().Name}");
 
             SettleTasks();

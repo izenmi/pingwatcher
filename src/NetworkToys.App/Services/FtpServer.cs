@@ -111,9 +111,15 @@ internal sealed class FtpServer : IFileServer
             session = new FtpSession(client, _rootDirectory, _user, _password, Raise);
             await session.RunAsync(token).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
+        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException
+                                         or OperationCanceledException)
         {
-            // 相手が切ったなどは想定内
+            // 相手が切った・こちらが止めた、などは想定内。
+            // OperationCanceledException（TaskCanceledException を含む）は「停止した」
+            // というだけで異常ではない — 応答を書いている最中に Stop() が来ると
+            // WriteLineAsync がこれを投げる。想定内に入れていなかったため、
+            // 待受を止めるたびに crash.log が汚れていた（CI で実測。TftpServer は
+            // 元から入れてあったので、あちらと同じ形に揃える）
         }
         catch (Exception ex)
         {
