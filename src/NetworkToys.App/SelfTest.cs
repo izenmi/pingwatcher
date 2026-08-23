@@ -33,9 +33,29 @@ internal static class SelfTest
             // どの検査に入ったかだけ先にファイルへ残し、完走したら全文で上書きする
             TryAppendProgress($"  実行中: {name}");
 
+            int crashesBefore = CrashLog.Count;
+
             try
             {
                 action();
+
+                // 例外を投げずに終わっても、握り潰されて crash.log に落ちていることがある
+                // (MainWindow.OnClosing やセッションの catch-all はそういう作り)。
+                // プロセスは落ちず終了コードにも出ないので、ここで見ないと誰も気づかない。
+                // 原因の検査に紐付けて報告できるのが、CI でファイルの有無を見るより良い点。
+                //
+                // 非同期に上がる例外(UnobservedTaskException)は別の検査の最中に
+                // 回収されて濡れ衣を着せることがあるので、疑わしい検査は自分の中で
+                // SettleTasks() を呼んで確定させること
+                if (CrashLog.Count > crashesBefore)
+                {
+                    failures.Add(name);
+                    log.AppendLine($"  FAIL  {name}");
+                    log.AppendLine($"        この検査中に crash.log へ {CrashLog.Count - crashesBefore} 件記録された" +
+                                   $"（直近の出どころ: {CrashLog.LastSource}）");
+                    return;
+                }
+
                 log.AppendLine($"  OK    {name}");
             }
             catch (Exception ex)
@@ -74,6 +94,40 @@ internal static class SelfTest
             probe.Start();
 
             return ((IPEndPoint)probe.LocalEndpoint).Port;
+        }
+
+        // UDP の待受には必ずこちらを使う。
+        // <b>TCP で借りた番号を UDP に使い回さないこと。</b>Windows は動的ポート範囲の
+        // 一部をプロトコルごとに別々に予約しており（Hyper-V / WinNAT の excludedportrange）、
+        // TCP で空いている番号が UDP では WSAEACCES になる。GitHub のランナーは
+        // この予約が広く、TCP 由来の番号を渡した TFTP / syslog / Trap の検査が
+        // 「AccessDenied」で落ちた（手元の PC には予約が無いので通っていた）
+        static int FreeUdpPort()
+        {
+            using var probe = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+
+            return ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
+        }
+
+        // 捨てたタスク(`_ = …Async()`)から出た例外は、GC がその Task を回収して
+        // ファイナライザが走るまで UnobservedTaskException として上がってこない。
+        // サーバを止めた直後などに呼んで、その場で確定させる（呼ばないと
+        // 「たまたま GC が回れば見つかる」という運任せの検査になる）
+        static void SettleTasks()
+        {
+            // 「タスクが例外で終わる → GC が Task を回収する → ファイナライザが
+            // UnobservedTaskException を上げる」の 3 段を経るので、1 回の Collect では
+            // 間に合わない。セッションが終わるのもこちらの操作より少し遅れる。
+            // 少しだけ粘ると、原因の検査が自分の不始末を自分で拾えるようになる
+            // （粘らないと、次のサーバの検査が濡れ衣を着る）
+            for (int i = 0; i < 5; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+
+                Thread.Sleep(50);
+            }
         }
 
         static void TryDelete(string directory)
@@ -2293,7 +2347,7 @@ internal static class SelfTest
 
         Check("FTP サーバを起動して停止できる", () =>
         {
-            // 実際の転送は CI では確かめられない。ここで見たいのは
+            // 転送そのものは下の往復検査が見る。ここで見たいのは
             // 待受の開始と後始末が例外なく通ること。ポート 0 で衝突を避ける
             string root = Path.Combine(Path.GetTempPath(), $"networktoys-ftp-{Guid.NewGuid():N}");
             using var server = new Services.FtpServer(root);
@@ -2392,6 +2446,11 @@ internal static class SelfTest
             }
             finally
             {
+                // セッションを回したまま Dispose する経路。ここで枠の返却が壊れていると
+                // 捨てたタスクから ObjectDisposedException が上がる（実際に踏んだ）。
+                // GC を待って確定させれば、この検査の失敗として名指しで出る
+                SettleTasks();
+
                 TryDelete(root);
                 TryDelete(work);
             }
@@ -2511,6 +2570,118 @@ internal static class SelfTest
             }
         });
 
+        Check("TFTP: 自分のサーバへ自分のクライアントで往復できる", () =>
+        {
+            // TFTP のクライアントは製品には無いので、Core の組み立て(TftpPacket.Request)で
+            // ここに最小限の 1 台を作る（偽の Cisco 機器・偽の STUN と同じ手）。
+            // 見たいのは転送セッションの経路 — TID の切り替え・OACK・ブロック番号・
+            // そして「セッションを回したあとに Dispose する」ところ。loopback のみ
+            string root = Path.Combine(Path.GetTempPath(), $"networktoys-tftpc-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(root);
+
+            byte[] body = Encoding.UTF8.GetBytes("hostname RT02\nこんにちは\n");
+            int port = FreeUdpPort();
+
+            byte[] Exchange(System.Net.Sockets.UdpClient client, byte[] packet, IPEndPoint to, ref IPEndPoint? from)
+            {
+                client.Send(packet, packet.Length, to);
+                return client.Receive(ref from);
+            }
+
+            // サーバは最後の ACK を返してからファイルを閉じるので、受け取った側が
+            // すぐ読むと「別のプロセスが使用中」になる。閉じ切るまでだけ待つ
+            static byte[] ReadWhenClosed(string path)
+            {
+                DateTime until = DateTime.UtcNow.AddSeconds(15);
+                while (true)
+                {
+                    try { return File.ReadAllBytes(path); }
+                    catch (IOException) when (DateTime.UtcNow < until) { Thread.Sleep(50); }
+                }
+            }
+
+            try
+            {
+                using (var server = new Services.TftpServer(root))
+                {
+                    server.Start(port);
+
+                    var events = new List<string>();
+                    using var recorded = new ManualResetEventSlim(false);
+
+                    server.Event += e =>
+                    {
+                        lock (events)
+                        {
+                            events.Add(e.Text);
+                            if (events.Count >= 2) recorded.Set();
+                        }
+                    };
+
+                    var wellKnown = new IPEndPoint(IPAddress.Loopback, port);
+
+                    // 送信（WRQ）。blksize を付けるので OACK の経路も通る
+                    using (var client = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
+                    {
+                        client.Client.ReceiveTimeout = 15000;
+
+                        byte[] wrq = Core.Tftp.TftpPacket.Request(
+                            Core.Tftp.TftpOpcode.WriteRequest, "uploaded.cfg", "octet",
+                            new Dictionary<string, string> { ["blksize"] = "512" });
+
+                        IPEndPoint? session = null;
+                        byte[] oack = Exchange(client, wrq, wellKnown, ref session);
+
+                        Assert(Core.Tftp.TftpPacket.OpcodeOf(oack) == Core.Tftp.TftpOpcode.OptionAck,
+                               $"WRQ に OACK が返らない（{Core.Tftp.TftpPacket.OpcodeOf(oack)}）");
+
+                        // 転送は要求を受けた口とは別のポートで行うのが TFTP の作法
+                        Assert(session!.Port != port, "転送が要求と同じポートで行われている（TID が切り替わっていない）");
+
+                        byte[] ack = Exchange(client, Core.Tftp.TftpPacket.Data(1, body), session, ref session);
+                        Assert(Core.Tftp.TftpPacket.ReadAckBlock(ack) == 1, "DATA(1) が ACK されない");
+                    }
+
+                    Assert(ReadWhenClosed(Path.Combine(root, "uploaded.cfg")).SequenceEqual(body),
+                           "送ったファイルの中身が違う");
+
+                    // 取得（RRQ）。オプションを付けないので OACK を挟まない経路
+                    using (var client = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
+                    {
+                        client.Client.ReceiveTimeout = 15000;
+
+                        byte[] rrq = Core.Tftp.TftpPacket.Request(Core.Tftp.TftpOpcode.ReadRequest, "uploaded.cfg");
+
+                        IPEndPoint? session = null;
+                        byte[] data = Exchange(client, rrq, wellKnown, ref session);
+
+                        Assert(Core.Tftp.TftpPacket.ReadDataBlock(data) == 1,
+                               $"RRQ に DATA(1) が返らない（{Core.Tftp.TftpPacket.OpcodeOf(data)}）");
+                        Assert(Core.Tftp.TftpPacket.ReadDataPayload(data).ToArray().SequenceEqual(body),
+                               "取得した中身が違う");
+
+                        byte[] last = Core.Tftp.TftpPacket.Ack(1);
+                        client.Send(last, last.Length, session!);
+                    }
+
+                    // 画面の履歴にも 1 転送 = 1 行で出る。取得側の記録は最後の ACK を
+                    // 受け取ってから立つので、届くまで待ってから数える
+                    Assert(recorded.Wait(TimeSpan.FromSeconds(15)), "転送の記録が 2 件そろわない");
+
+                    lock (events)
+                        log.AppendLine($"        記録: {string.Join(" / ", events)}");
+                }
+
+                // サーバを Dispose した直後。枠の返却が壊れていると、ここで
+                // 捨てたタスクから ObjectDisposedException が上がる
+                SettleTasks();
+            }
+            finally
+            {
+                TryDelete(root);
+            }
+        });
+
         Check("syslog サーバを起動して停止できる", () =>
         {
             using var server = new Services.SyslogReceiver();
@@ -2520,6 +2691,57 @@ internal static class SelfTest
             Assert(!server.IsRunning, "syslog サーバが停止していない");
         });
 
+        Check("syslog: 投げた 1 行が重大度付きで受け取れる", () =>
+        {
+            // 解析そのものは Core の xUnit が固めているが、受信→解析→行にする
+            // 結線はここでしか通らない。重大度を文字列に混ぜて潰した過去があるので、
+            // 数値のまま届いているところまで見る。loopback のみ
+            int port = FreeUdpPort();
+
+            using var server = new Services.SyslogReceiver();
+            server.Start(port);
+
+            var got = new List<Services.FileServerEvent>();
+            using var arrived = new ManualResetEventSlim(false);
+
+            server.Event += e =>
+            {
+                lock (got)
+                {
+                    got.Add(e);
+                    if (got.Count >= 2) arrived.Set();
+                }
+            };
+
+            using (var sender = new System.Net.Sockets.UdpClient())
+            {
+                // 1 データグラムに 2 行。改行区切りで複数来る機器がある
+                byte[] payload = Encoding.UTF8.GetBytes(
+                    "<131>Aug 23 13:00:00 RT01 %LINK-3-UPDOWN: Interface Gi0/1, changed state to down\n" +
+                    "壊れた行（PRI なし）\n");
+                sender.Send(payload, payload.Length, new IPEndPoint(IPAddress.Loopback, port));
+            }
+
+            Assert(arrived.Wait(TimeSpan.FromSeconds(15)), "投げた syslog が届かない");
+
+            lock (got)
+            {
+                Assert(got.Count == 2, $"2 行のはずが {got.Count} 行");
+
+                // 131 = facility 16, severity 3(err)。err 以下は「重い」側
+                Assert(got[0].Severity == 3, $"重大度が 3 でない（{got[0].Severity}）");
+                Assert(got[0].Text.Contains("UPDOWN", StringComparison.Ordinal), "本文が取れていない");
+
+                // PRI が無い行は「重大度なし」と区別できること（-1 で来る）
+                Assert(got[1].Severity == -1, $"PRI 無しの行が -1 でない（{got[1].Severity}）");
+
+                log.AppendLine($"        受信 {got.Count} 行 / 重大度 {got[0].Severity}");
+            }
+
+            server.Stop();
+            SettleTasks();
+        });
+
         Check("SNMP Trap 受信を起動して停止できる", () =>
         {
             using var server = new Services.SnmpTrapReceiver();
@@ -2527,6 +2749,86 @@ internal static class SelfTest
             Assert(server.IsRunning, "Trap 受信が起動していない");
             server.Stop();
             Assert(!server.IsRunning, "Trap 受信が停止していない");
+        });
+
+        Check("SNMP Trap: 投げた v2c Trap が名前付きで受け取れる", () =>
+        {
+            // 組み立ては Core（SnmpCodec.BuildTrapV2）で xUnit が固めている。
+            // ここで見たいのは受信→解析→文面にする結線。loopback のみ
+            int port = FreeUdpPort();
+
+            using var server = new Services.SnmpTrapReceiver();
+            server.Start(port);
+
+            Services.FileServerEvent? got = null;
+            using var arrived = new ManualResetEventSlim(false);
+
+            server.Event += e => { got = e; arrived.Set(); };
+
+            using (var sender = new System.Net.Sockets.UdpClient())
+            {
+                byte[] trap = Core.Snmp.SnmpCodec.BuildTrapV2(
+                    "public", requestId: 1, upTimeHundredths: 123456,
+                    Core.Snmp.Oid.Parse("1.3.6.1.6.3.1.1.5.3")!);   // linkDown
+
+                sender.Send(trap, trap.Length, new IPEndPoint(IPAddress.Loopback, port));
+            }
+
+            Assert(arrived.Wait(TimeSpan.FromSeconds(15)), "投げた Trap が届かない");
+            Assert(got is not null, "受け取った内容が空");
+
+            // 既知 OID は名前で出す（数字のままだと画面で何の trap か分からない）
+            Assert(got!.Text.Contains("linkDown", StringComparison.Ordinal),
+                   $"文面に trap の名前が出ていない: {got.Text}");
+            Assert(got.Text.Contains("public", StringComparison.Ordinal),
+                   $"文面にコミュニティが出ていない: {got.Text}");
+
+            log.AppendLine($"        受信: {got.Text}");
+
+            server.Stop();
+            SettleTasks();
+        });
+
+        Check("待受を立てたまま閉じても後始末が通る", () =>
+        {
+            // 現場での普通の使い方（サーバを立てっぱなしでアプリを閉じる）。
+            // MainWindow.OnClosing は 5 つの待受を Reset() し、例外を握り潰して
+            // crash.log に落とすだけなので、ここで見ないと壊れても誰も気づかない。
+            // FTP サーバの Dispose 競合は、まさにこの経路で毎回出ていた
+            var closing = new Views.MainWindow();
+            closing.Show();
+            closing.UpdateLayout();
+
+            var shell = closing.DataContext as ViewModels.ShellViewModel;
+            Assert(shell is not null, "ShellViewModel が DataContext に居ない");
+
+            // ポートはプロトコルごとに借りる（TFTP / syslog / Trap は UDP）。
+            // TCP で借りた番号を渡すと、予約範囲の広い環境で AccessDenied になる
+            (ViewModels.FileServerViewModel Vm, bool Udp)[] servers =
+            [
+                (shell!.Ftp, false),
+                (shell.Tftp, true),
+                (shell.Sftp, false),
+                (shell.Syslog, true),
+                (shell.SnmpTrap, true),
+            ];
+
+            foreach ((ViewModels.FileServerViewModel vm, bool udp) in servers)
+            {
+                int port = udp ? FreeUdpPort() : FreePort();
+
+                vm.Port = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                vm.StartCommand.Execute(null);
+                Assert(vm.IsRunning, $"待受を開始できない: {vm.GetType().Name}（{vm.Status}）");
+            }
+
+            // 閉じる = OnClosing → Reset() → Dispose() という製品と同じ経路
+            closing.Close();
+
+            foreach ((ViewModels.FileServerViewModel vm, _) in servers)
+                Assert(!vm.IsRunning, $"閉じても待受が止まっていない: {vm.GetType().Name}");
+
+            SettleTasks();
         });
 
         Check("traceroute を実行できる", () =>
@@ -2752,6 +3054,12 @@ internal static class SelfTest
                 1.0);
             Assert(text.Width > 0, "整形結果の幅が 0");
         });
+
+        // 最後の保険。個々の検査で SettleTasks() を呼び損ねていても、ここで回収を待てば
+        // 捨てたタスクからの例外は必ず表に出る。プロセスは落ちないので、これが無いと
+        // 「GC がたまたま回れば crash.log に出る」という運任せの検出になる。
+        // どの検査が原因かまでは分からないので、疑わしい検査は自分の中で確定させること
+        Check("捨てたタスクから例外が上がっていない", SettleTasks);
 
         log.AppendLine();
         log.AppendLine(failures.Count == 0

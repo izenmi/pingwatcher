@@ -71,32 +71,38 @@ internal sealed class TftpServer : IFileServer
             if (request is null)
                 continue;   // RRQ/WRQ 以外が最初に来ることはない。無視
 
-            // 溢れたら断る（相手には ERROR を返す）
-            if (!await _sessions.WaitAsync(0, token).ConfigureAwait(false))
+            // 溢れたら断る（相手には ERROR を返す）。
+            // 0 ミリ秒待ちは決して待たないので、トークンは渡さない — 渡すと停止と競った
+            // ときに OperationCanceledException がこのループの外へ出る。ループ自身が
+            // 捨てられたタスク（Start の `_ =`）なので誰も観測せず、crash.log を汚す
+            if (!_sessions.Wait(0))
             {
                 await SendBusyAsync(received.RemoteEndPoint).ConfigureAwait(false);
                 continue;
             }
 
+            // 枠の返却はセッション側の finally に任せる。ContinueWith で外から返すと、
+            // その継続もまた捨てられたタスクになり、例外の行き場が無くなる
             bool isRead = opcode == TftpOpcode.ReadRequest;
-            _ = RunSessionAsync(request.Value, isRead, received.RemoteEndPoint, token)
-                .ContinueWith(_ => _sessions.Release(), TaskScheduler.Default);
+            _ = RunSessionAsync(request.Value, isRead, received.RemoteEndPoint, token);
         }
     }
 
     private async Task RunSessionAsync(TftpRequest request, bool isRead, IPEndPoint remote, CancellationToken token)
     {
-        // 転送は要求元とは別の（エフェメラル）ソケットで行う（TFTP の作法）
-        using var socket = new UdpClient(new IPEndPoint(IPAddress.Any, 0));
-        socket.Connect(remote);
-
-        var path = new FtpVirtualPath(_rootDirectory);
-        string? local = path.Resolve(request.Filename);
-
-        string remoteText = remote.Address.ToString();
-
+        // ソケットを作るところも try の中に入れる。捨てられたタスクで走るので、
+        // ここで投げると誰も観測できないうえ、枠も返らないまま減り続ける
         try
         {
+            // 転送は要求元とは別の（エフェメラル）ソケットで行う（TFTP の作法）
+            using var socket = new UdpClient(new IPEndPoint(IPAddress.Any, 0));
+            socket.Connect(remote);
+
+            var path = new FtpVirtualPath(_rootDirectory);
+            string? local = path.Resolve(request.Filename);
+
+            string remoteText = remote.Address.ToString();
+
             if (local is null)
             {
                 await SendErrorAsync(socket, TftpError.AccessViolation, "パスが不正です。").ConfigureAwait(false);
@@ -115,6 +121,10 @@ internal sealed class TftpServer : IFileServer
         catch (Exception ex)
         {
             CrashLog.Write(ex, "TftpServer.Session");
+        }
+        finally
+        {
+            _sessions.Release();   // 上限の枠を返す（取ったのは ReceiveLoopAsync）
         }
     }
 
@@ -259,9 +269,7 @@ internal sealed class TftpServer : IFileServer
     private void Raise(string remote, string text)
         => Event?.Invoke(new FileServerEvent(DateTime.Now, remote, text));
 
-    public void Dispose()
-    {
-        Stop();
-        _sessions.Dispose();
-    }
+    // _sessions は破棄しない（理由は FtpServer.Dispose と同じ）。Stop() は待受を畳むだけで、
+    // 進行中の転送はその後も動いており、終わったときに枠を返しに来る
+    public void Dispose() => Stop();
 }

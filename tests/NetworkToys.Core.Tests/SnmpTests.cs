@@ -142,4 +142,63 @@ public class SnmpTests
         Assert.True(Oid.Parse("1.3.6.1.2.1.2.2.1.2.1")!.IsDescendantOf(root));
         Assert.False(Oid.Parse("1.3.6.1.2.1.2.2.1.3.1")!.IsDescendantOf(root));
     }
+
+    [Fact]
+    public void A_v2c_trap_round_trips_through_the_parser()
+    {
+        Oid linkDown = Oid.Parse("1.3.6.1.6.3.1.1.5.3")!;
+
+        byte[] packet = SnmpCodec.BuildTrapV2("public", 42, 123456, linkDown);
+        SnmpMessage? trap = SnmpCodec.Parse(packet);
+
+        Assert.NotNull(trap);
+        Assert.Equal(SnmpVersion.V2c, trap!.Version);
+        Assert.Equal("public", trap.Community);
+        Assert.Equal(BerTag.TrapV2, trap.PduTag);
+        Assert.Equal(42, trap.RequestId);
+
+        // 受け側が先頭 2 つ目から拾う値。ここが噛み合わないと画面に trap としか出ない
+        Assert.Equal("linkDown", trap.TrapOid?.DisplayName);
+    }
+
+    // 並びは RFC3416 で決まっており、受け側もそれを前提に 2 つ目を見る
+    [Fact]
+    public void A_v2c_trap_starts_with_sysuptime_then_the_trap_oid()
+    {
+        byte[] packet = SnmpCodec.BuildTrapV2("public", 1, 100, Oid.Parse("1.3.6.1.6.3.1.1.5.4")!);
+        SnmpMessage trap = SnmpCodec.Parse(packet)!;
+
+        Assert.Equal("sysUpTime", trap.VarBinds[0].Oid.DisplayName);
+        Assert.Equal("TimeTicks", trap.VarBinds[0].Value.TypeName);
+        Assert.Equal("snmpTrapOID", trap.VarBinds[1].Oid.DisplayName);
+    }
+
+    [Fact]
+    public void Extra_varbinds_are_carried_after_the_fixed_two()
+    {
+        var writer = new BerWriter();
+        writer.WriteOctetString(System.Text.Encoding.ASCII.GetBytes("GigabitEthernet0/1"));
+        var reader = new BerReader(writer.ToArray());
+        reader.TryReadElement(out BerElement el);
+
+        var extra = new VarBind(Oid.Parse("1.3.6.1.2.1.2.2.1.2.1")!, SnmpValue.From(el.Tag, el.Content));
+
+        byte[] packet = SnmpCodec.BuildTrapV2("trapcom", 7, 0, Oid.Parse("1.3.6.1.6.3.1.1.5.3")!, [extra]);
+        SnmpMessage trap = SnmpCodec.Parse(packet)!;
+
+        Assert.Equal(3, trap.VarBinds.Count);
+        Assert.Contains("GigabitEthernet0/1", trap.VarBinds[2].Value.Display, StringComparison.Ordinal);
+    }
+
+    // TimeTicks は符号なし。最上位ビットが立つ値で符号付きとして読まれると
+    // 稼働時間が負になって表示が壊れる
+    [Fact]
+    public void A_large_uptime_stays_unsigned()
+    {
+        byte[] packet = SnmpCodec.BuildTrapV2("public", 1, 0x80000000, Oid.Parse("1.3.6.1.6.3.1.1.5.1")!);
+        SnmpMessage trap = SnmpCodec.Parse(packet)!;
+
+        Assert.True(BerReader.TryReadUnsigned(trap.VarBinds[0].Value.Raw, out ulong ticks));
+        Assert.Equal(0x80000000UL, ticks);
+    }
 }

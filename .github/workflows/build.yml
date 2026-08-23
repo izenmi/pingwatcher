@@ -70,7 +70,6 @@ jobs:
             -o publish/${{ matrix.name }}
           if ($LASTEXITCODE -ne 0) { throw "publish が失敗しました" }
 
-      # 軽量版は .NET デスクトップランタイムが別途要る。入っていないと exe は
       # 同梱物の著作権表示。exe にも埋め込んである（ヘルプ → ライセンス情報）が、
       # 配布物としてテキストでも添える。MIT / Apache-2.0 / OFL 1.1 はいずれも
       # 再配布時にライセンス本文を添えることを求めている。
@@ -95,11 +94,14 @@ jobs:
           $exe = Join-Path $PWD 'NetworkToys.exe'
           if (-not (Test-Path $exe)) { throw "NetworkToys.exe が生成されていません" }
 
+          # crash.log は追記されるので、実行ごとに消してからでないと
+          # 「どちらの実行で出たのか」が分からなくなる
           function Invoke-SelfTest {
+            Remove-Item 'crash.log' -ErrorAction SilentlyContinue
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
             $proc = Start-Process -FilePath $exe -ArgumentList '--selftest' -Wait -PassThru -WorkingDirectory $PWD
             $sw.Stop()
-            return [pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Code = $proc.ExitCode }
+            return [pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Code = $proc.ExitCode; Crashed = (Test-Path 'crash.log') }
           }
 
           # 単一ファイル版の初回起動はネイティブライブラリを %TEMP%\.net へ展開するため遅い
@@ -117,6 +119,12 @@ jobs:
 
           if ($first.Code -ne 0)  { throw "自己診断が初回の実行で失敗しました (exit $($first.Code))" }
           if ($second.Code -ne 0) { throw "自己診断が失敗しました (exit $($second.Code))" }
+
+          # 終了コードが 0 でも crash.log があれば失敗にする。捨てられたタスクから
+          # 上がる例外(UnobservedTaskException)はプロセスを落とさないので、ここでしか
+          # 捕まらない。表示するだけにしていたため、FTP サーバの停止で毎回出ていた
+          # ObjectDisposedException をずっと緑のまま見逃していた
+          if ($first.Crashed -or $second.Crashed) { throw "自己診断は通りましたが crash.log が出ています（上のログを参照）" }
 
           "SELFTEST_FIRST=$($first.Ms)"  | Add-Content -Path $env:GITHUB_ENV
           "SELFTEST_SECOND=$($second.Ms)" | Add-Content -Path $env:GITHUB_ENV
@@ -148,11 +156,36 @@ jobs:
           }
 
           $mem = [math]::Round($proc.WorkingSet64 / 1MB, 1)
-          Stop-Process -Id $proc.Id -Force
 
-          # プロセス終了とファイルハンドル解放は非同期。待たずに後片付けへ進むと
-          # ログの削除が空振りして selftest.log が成果物に混入することがある
-          $proc.WaitForExit(5000) | Out-Null
+          # 強制終了(TerminateProcess)では MainWindow.OnClosing が一度も走らない。
+          # あそこは 5 つの待受を Reset() し、WFP の記録設定と Windows のプロキシ設定を
+          # 元へ戻し、収集タブと試験タブの設定を保存する — つまり「閉じたときにだけ
+          # 動くコード」が丸ごと未検証になっていた。しかも例外は crash.log へ握り潰す。
+          # ここは正規の閉じ方(WM_CLOSE)を通し、終了コードまで見る。
+          # OnClosing に確認ダイアログを足すと、ここで返事を待って止まるので注意
+          $closed = $proc.CloseMainWindow()
+          if (-not $closed) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "ウィンドウを閉じる要求を受け付けませんでした"
+          }
+
+          $exit = [System.Diagnostics.Stopwatch]::StartNew()
+          if (-not $proc.WaitForExit(30000)) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "閉じてから 30 秒以内に終了しませんでした（後始末で止まっている疑い）"
+          }
+          $exit.Stop()
+
+          if ($proc.ExitCode -ne 0) { throw "終了コードが 0 ではありません (exit $($proc.ExitCode))" }
+
+          # 自己診断ステップと同じ判定。握り潰した例外も捨てたタスクからの例外も
+          # プロセスを落とさないので、crash.log を見ないと緑のまま通ってしまう
+          if (Test-Path 'crash.log') {
+            Get-Content 'crash.log' | Write-Host
+            throw "GUI の起動から終了までの間に crash.log が出ています"
+          }
+
+          Write-Host "終了までの時間: $($exit.ElapsedMilliseconds) ms"
 
           $sizeMb = [math]::Round(((Get-ChildItem -Recurse -File $PWD | Measure-Object -Property Length -Sum).Sum) / 1MB, 1)
 
