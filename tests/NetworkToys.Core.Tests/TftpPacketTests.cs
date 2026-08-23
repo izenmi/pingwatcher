@@ -95,4 +95,49 @@ public class TftpPacketTests
         Assert.Equal(TftpOpcode.OptionAck, TftpPacket.OpcodeOf(packet));
         Assert.Contains("blksize", Encoding.ASCII.GetString(packet), StringComparison.Ordinal);
     }
+
+    [Theory]
+    [InlineData(TftpOpcode.ReadRequest)]
+    [InlineData(TftpOpcode.WriteRequest)]
+    public void A_request_round_trips_through_the_reader(TftpOpcode opcode)
+    {
+        byte[] packet = TftpPacket.Request(
+            opcode, "running-config.txt", "octet",
+            new Dictionary<string, string> { ["blksize"] = "1468", ["tsize"] = "0" });
+
+        Assert.Equal(opcode, TftpPacket.OpcodeOf(packet));
+
+        TftpRequest? read = TftpPacket.ReadRequest(packet);
+        Assert.NotNull(read);
+        Assert.Equal("running-config.txt", read!.Value.Filename);
+        Assert.Equal("octet", read.Value.Mode);
+        Assert.Equal("1468", read.Value.Options["blksize"]);
+        Assert.Equal("0", read.Value.Options["tsize"]);
+    }
+
+    // 組み立て側を後から足したので、それまで手で組んでいた形と 1 バイトも
+    // 違わないことを固定する（違えば、これまでの検査が別物を見ていたことになる）
+    [Fact]
+    public void The_builder_produces_the_same_bytes_the_tests_built_by_hand()
+    {
+        byte[] byHand = BuildRequest(TftpOpcode.ReadRequest, "startup.cfg", "octet", "blksize", "512");
+        byte[] built = TftpPacket.Request(
+            TftpOpcode.ReadRequest, "startup.cfg", "octet",
+            new Dictionary<string, string> { ["blksize"] = "512" });
+
+        Assert.Equal(byHand, built);
+    }
+
+    [Fact]
+    public void A_request_without_options_ends_after_the_mode()
+    {
+        byte[] packet = TftpPacket.Request(TftpOpcode.WriteRequest, "a.txt");
+
+        Assert.Equal(BuildRequest(TftpOpcode.WriteRequest, "a.txt", "octet"), packet);
+        Assert.Empty(TftpPacket.ReadRequest(packet)!.Value.Options);
+    }
+
+    [Fact]
+    public void Only_rrq_and_wrq_can_be_built_as_requests()
+        => Assert.Throws<ArgumentOutOfRangeException>(() => TftpPacket.Request(TftpOpcode.Data, "a.txt"));
 }

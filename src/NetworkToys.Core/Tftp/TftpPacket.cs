@@ -118,6 +118,43 @@ public static class TftpPacket
         return buffer;
     }
 
+    /// <summary>
+    /// RRQ/WRQ を組み立てる（クライアント側）。<see cref="ReadRequest"/> の逆。
+    ///
+    /// 本体には要らないが、自己診断が自分のサーバへ自分で投げて往復を確かめるのに使う
+    /// （偽の Cisco 機器・偽の STUN と同じ手）。読み取り側だけを持っていると、
+    /// 組み立ての誤りを実機でしか踏めない。
+    /// </summary>
+    /// <param name="opcode"><see cref="TftpOpcode.ReadRequest"/> か <see cref="TftpOpcode.WriteRequest"/>。</param>
+    public static byte[] Request(
+        TftpOpcode opcode,
+        string filename,
+        string mode = "octet",
+        IReadOnlyDictionary<string, string>? options = null)
+    {
+        if (opcode is not (TftpOpcode.ReadRequest or TftpOpcode.WriteRequest))
+            throw new ArgumentOutOfRangeException(nameof(opcode), opcode, "RRQ か WRQ でなければならない");
+
+        var body = new List<byte> { 0, (byte)opcode };
+
+        void AddField(string text)
+        {
+            body.AddRange(Encoding.ASCII.GetBytes(text));
+            body.Add(0);
+        }
+
+        AddField(filename);
+        AddField(mode);
+
+        foreach ((string key, string value) in options ?? new Dictionary<string, string>())
+        {
+            AddField(key);
+            AddField(value);
+        }
+
+        return [.. body];
+    }
+
     /// <summary>OACK（交渉したオプションを返す）。</summary>
     public static byte[] OptionAck(IReadOnlyDictionary<string, string> options)
     {

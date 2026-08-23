@@ -79,29 +79,36 @@ internal sealed class FtpServer : IFileServer
                 return;   // 停止した
             }
 
-            // 同時接続の上限。溢れたら丁寧に断って閉じる
-            if (!await _sessions.WaitAsync(0, token).ConfigureAwait(false))
+            // 同時接続の上限。溢れたら丁寧に断って閉じる。
+            // 0 ミリ秒待ちは決して待たないので、トークンは渡さない — 渡すと停止と競った
+            // ときに OperationCanceledException がこのループの外へ出る。ループ自身が
+            // 捨てられたタスク（Start の `_ =`）なので誰も観測せず、crash.log を汚す
+            if (!_sessions.Wait(0))
             {
                 try
                 {
                     await using var stream = client.GetStream();
                     await WriteLineAsync(stream, "421 接続数が上限に達しています。", token).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ex is IOException or SocketException) { }
+                catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException) { }
                 client.Dispose();
                 continue;
             }
 
-            _ = RunSessionAsync(client, token).ContinueWith(
-                _ => _sessions.Release(), TaskScheduler.Default);
+            // 枠の返却はセッション側の finally に任せる。ContinueWith で外から返すと、
+            // その継続もまた捨てられたタスクになり、例外の行き場が無くなる
+            _ = RunSessionAsync(client, token);
         }
     }
 
     private async Task RunSessionAsync(TcpClient client, CancellationToken token)
     {
-        var session = new FtpSession(client, _rootDirectory, _user, _password, Raise);
+        // 組み立ても try の中に入れる。捨てられたタスクで走るので、ここで投げると
+        // 誰も観測できないうえ、枠も返らないまま減り続ける
+        FtpSession? session = null;
         try
         {
+            session = new FtpSession(client, _rootDirectory, _user, _password, Raise);
             await session.RunAsync(token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
@@ -114,7 +121,9 @@ internal sealed class FtpServer : IFileServer
         }
         finally
         {
-            session.Dispose();
+            // 組み立てに失敗したときは接続だけ閉じる（session が面倒を見られない）
+            if (session is not null) session.Dispose(); else client.Dispose();
+            _sessions.Release();   // 上限の枠を返す（取ったのは AcceptLoopAsync）
         }
     }
 
@@ -128,11 +137,12 @@ internal sealed class FtpServer : IFileServer
         await stream.FlushAsync(token).ConfigureAwait(false);
     }
 
-    public void Dispose()
-    {
-        Stop();
-        _sessions.Dispose();
-    }
+    // _sessions は破棄しない。Stop() は待受を畳むだけで、進行中のセッションはその後も
+    // 動いており、終わったときに枠を返しに来る。ここで破棄すると、その Release が
+    // ObjectDisposedException になり、セッションを回しているタスクは捨てられているので
+    // 誰も観測せず crash.log を汚す（転送のあと停止するたびに毎回起きていた）。
+    // SemaphoreSlim は AvailableWaitHandle を使わない限り解放すべき資源を持たない。
+    public void Dispose() => Stop();
 }
 
 /// <summary>制御接続 1 本 = クライアント 1 台分の状態機械。</summary>
