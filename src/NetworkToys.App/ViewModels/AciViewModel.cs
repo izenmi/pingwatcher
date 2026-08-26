@@ -54,10 +54,13 @@ public sealed class AciViewModel : ObservableObject, IDisposable
     private AciNodeItem? _selectedNode;
     private AciEpgRow? _selectedEpg;
     private string? _selectedTenant;
+    private const string NoCaptureLabel = "まだ取っていません";
+    private const string EditedMark = "（手で編集）";
+
     private string _before = "";
     private string _after = "";
-    private string _beforeLabel = "まだ取っていません";
-    private string _afterLabel = "まだ取っていません";
+    private string _beforeLabel = NoCaptureLabel;
+    private string _afterLabel = NoCaptureLabel;
     private string _diffHeadline = "";
     private bool _onlyDifferences;
     private bool _showFetchedText = true;
@@ -286,10 +289,48 @@ public sealed class AciViewModel : ObservableObject, IDisposable
     /// <summary>
     /// 取ってきた設定そのもの。<b>取れたことがその場で見えるように画面に出す</b>
     /// （出さずに比較だけ押させると、取れているのか分からない）。
+    ///
+    /// <b>手でも書き換えられる</b>（2026-08-23 ユーザー指示）。「作業前を保存」で残した
+    /// 控えを貼って今と比べる、という使い方ができるように。書き換えたら見出しに
+    /// その旨を出す — 取得時の「何行取った」を名乗ったままだと証跡が嘘になる。
     /// </summary>
-    public string BeforeText => _before;
+    public string BeforeText
+    {
+        get => _before;
+        set
+        {
+            if (!SetProperty(ref _before, value)) return;
 
-    public string AfterText => _after;
+            _beforeLabel = EditedLabel(_beforeLabel);
+            OnPropertyChanged(nameof(BeforeLabel));
+            SideTextEdited();
+        }
+    }
+
+    public string AfterText
+    {
+        get => _after;
+        set
+        {
+            if (!SetProperty(ref _after, value)) return;
+
+            _afterLabel = EditedLabel(_afterLabel);
+            OnPropertyChanged(nameof(AfterLabel));
+            SideTextEdited();
+        }
+    }
+
+    private void SideTextEdited()
+    {
+        CompareCommand.RaiseCanExecuteChanged();
+        SaveSideCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>書き換えた側の見出し。取得の情報が残っていれば「手で編集」を書き足すだけにする。</summary>
+    private static string EditedLabel(string current)
+        => current is NoCaptureLabel or "" ? "手で入れた内容"
+         : current.EndsWith(EditedMark, StringComparison.Ordinal) ? current
+         : current + EditedMark;
 
     /// <summary>
     /// 取ってきた設定を出しているか。比較したら結果に切り替え、「取得内容に戻る」で戻る。

@@ -646,6 +646,32 @@ internal static class SelfTest
                    "書き出しにページングを重ねている");
         });
 
+        Check("ACI: 差分比較の作業前後は手で書き換えられる", () =>
+        {
+            // 保存した控えを貼って今と比べる使い方(2026-08-23 ユーザー指示)。
+            // 欄が読み取り専用に戻る・バインドが片向きに戻ると黙って使えなくなるので、
+            // 実際の欄に打って VM まで届くことを見る
+            Assert(window is not null, "ウィンドウが生成されていないため確認できない");
+
+            var shell = (ViewModels.ShellViewModel)window!.DataContext;
+
+            Assert(!window.AciBeforeBox.IsReadOnly && !window.AciAfterBox.IsReadOnly,
+                   "作業前後の欄が読み取り専用のまま");
+
+            window.AciBeforeBox.Text = "fvTenant uni/tn-A";
+            window.AciAfterBox.Text = "fvTenant uni/tn-B";
+
+            Assert(shell.Aci.BeforeText == "fvTenant uni/tn-A", "打った文字が VM に届いていない");
+            Assert(shell.Aci.CompareCommand.CanExecute(null), "両方入れたのに「比較」が押せない");
+            Assert(shell.Aci.BeforeLabel.Contains("手で", StringComparison.Ordinal),
+                   $"書き換えたのに見出しに出ない: {shell.Aci.BeforeLabel}");
+
+            // 後片付け（空に戻すと「比較」も押せない状態へ戻る）
+            window.AciBeforeBox.Text = "";
+            window.AciAfterBox.Text = "";
+            Assert(!shell.Aci.CompareCommand.CanExecute(null), "空に戻しても「比較」が押せてしまう");
+        });
+
         Check("ACI: 証明書を受け入れていない相手には繋がない", () =>
         {
             using var client = new Services.ApicClient("apic.selftest.invalid", null, new RefusingHost());
