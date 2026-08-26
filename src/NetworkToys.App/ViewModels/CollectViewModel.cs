@@ -327,6 +327,16 @@ public sealed class CollectViewModel : ObservableObject
             return;
         }
 
+        ImportCsvText(text);
+    }
+
+    /// <summary>
+    /// CSV の中身を取り込む。「CSV から取り込む」のファイル選択からも、
+    /// 機器一覧へのファイルの放り込みからも来る（読み込み口はすべて放り込みに
+    /// 対応させる決まり。この画面だけボタンからしか読めなかった）。
+    /// </summary>
+    public void ImportCsvText(string text)
+    {
         DeviceListParser.CsvParseResult parsed = DeviceListParser.ParseCsv(text, defaultUseSsh: true);
 
         if (parsed.Devices.Count == 0)

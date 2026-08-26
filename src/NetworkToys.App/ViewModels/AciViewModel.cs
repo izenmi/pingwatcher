@@ -131,6 +131,59 @@ public sealed class AciViewModel : ObservableObject, IDisposable
     public ObservableCollection<AciEndpointRow> EndpointRows { get; } = [];
     public ObservableCollection<AciDeviceRow> DeviceRows { get; } = [];
 
+    /// <summary>
+    /// Faults の絞り込み。ファブリック全体では数千行になるので、対象や文言で探せるように。
+    /// 行を collection から抜かずに <see cref="System.ComponentModel.ICollectionView"/> で
+    /// 隠す（Ping の絞り込みと同じやり方）。CSV 書き出しは絞る前の全行のまま。
+    /// </summary>
+    public string FaultFilter
+    {
+        get => _faultFilter;
+        set
+        {
+            if (!SetProperty(ref _faultFilter, value)) return;
+
+            System.ComponentModel.ICollectionView view =
+                System.Windows.Data.CollectionViewSource.GetDefaultView(FaultRows);
+
+            // 絞り込みが空のときは述語ごと外す（毎行の判定を走らせない）
+            view.Filter = _faultFilter.Length == 0 ? null : o => MatchesFault((AciFaultRow)o);
+        }
+    }
+
+    /// <summary>エンドポイントの絞り込み（MAC・IP・テナント・EPG・ポートの部分一致）。</summary>
+    public string EndpointFilter
+    {
+        get => _endpointFilter;
+        set
+        {
+            if (!SetProperty(ref _endpointFilter, value)) return;
+
+            System.ComponentModel.ICollectionView view =
+                System.Windows.Data.CollectionViewSource.GetDefaultView(EndpointRows);
+
+            view.Filter = _endpointFilter.Length == 0 ? null : o => MatchesEndpoint((AciEndpointRow)o);
+        }
+    }
+
+    private string _faultFilter = string.Empty;
+    private string _endpointFilter = string.Empty;
+
+    private bool MatchesFault(AciFaultRow row)
+        => row.Severity.Contains(_faultFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Code.Contains(_faultFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Target.Contains(_faultFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Description.Contains(_faultFilter, StringComparison.OrdinalIgnoreCase);
+
+    private bool MatchesEndpoint(AciEndpointRow row)
+        => row.Mac.Contains(_endpointFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Ip.Contains(_endpointFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Tenant.Contains(_endpointFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Epg.Contains(_endpointFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Encap.Contains(_endpointFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Node.Contains(_endpointFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Path.Contains(_endpointFilter, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>ブリッジドメイン。ルーティングの有無とネットワークアドレスを見る。</summary>
     public ObservableCollection<AciBdRow> BdRows { get; } = [];
 

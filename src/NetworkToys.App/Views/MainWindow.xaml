@@ -3122,7 +3122,9 @@
                                          ScrollViewer.VerticalScrollBarVisibility="Visible">
                                                 <ListBox.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Grid Height="{DynamicResource Size.RowHeight.Wide}">
+                                                        <!-- 回線の IP もそのまま次の道具へ送れる（クライアント一覧と同じ扱い） -->
+                                                        <Grid Height="{DynamicResource Size.RowHeight.Wide}"
+                                                              ContextMenu="{StaticResource RowMenu.Address}">
                                                             <Grid.ColumnDefinitions>
                                                                 <ColumnDefinition Width="*" />
                                                                 <ColumnDefinition Width="{Binding Source={x:Static vm:TableColumns.Instance}, Path=[mup.1]}" />
@@ -3228,7 +3230,13 @@
                                                 </DataTemplate>
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
-                                        <Button Content="クライアントを取得" Command="{Binding FetchClientsCommand}" Margin="0,0,6,0" />
+                                        <Button Content="クライアントを取得" Command="{Binding FetchClientsCommand}" Margin="0,0,12,0" />
+                                        <TextBlock Text="絞り込み" Style="{StaticResource Caption}"
+                                                   VerticalAlignment="Center" Margin="0,0,5,0" />
+                                        <TextBox Width="160" Margin="0,0,12,0"
+                                                 Text="{Binding ClientFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                 FontFamily="{DynamicResource Font.Mono}"
+                                                 ToolTip="拠点・名前・IP・MAC・VLAN・メーカーの部分一致で絞り込みます。保存は絞る前の全行です。" />
                                         <Button Content="Excel で保存" Command="{Binding SaveXlsxCommand}"
                                                 CommandParameter="clients" Margin="0,0,6,0"
                                                 ToolTip="絞り込みと見出し行の固定を付けた .xlsx で保存します。" />
@@ -3848,7 +3856,10 @@
                                          AcceptsReturn="True" AcceptsTab="False" TextWrapping="NoWrap"
                                          VerticalScrollBarVisibility="Auto"
                                          HorizontalScrollBarVisibility="Auto"
-                                         VerticalContentAlignment="Top" />
+                                         VerticalContentAlignment="Top"
+                                         AllowDrop="True"
+                                         PreviewDragOver="OnTextDragOver" Drop="OnTextDrop"
+                                         ToolTip="宛先を書いたテキストファイルを、この欄に放り込んでも読み込めます。" />
                             </DockPanel>
                         </Border>
 
@@ -4039,7 +4050,9 @@
                             <ItemsControl x:Name="TraceHopList" ItemsSource="{Binding Hops}" Tag="trace">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border x:Name="Row" CornerRadius="{DynamicResource Radius.Badge}" Padding="4,0">
+                                        <!-- 経路上のルータもそのまま次の道具へ送れる（応答の無いホップはメニューを出しても何も起きない） -->
+                                        <Border x:Name="Row" CornerRadius="{DynamicResource Radius.Badge}" Padding="4,0"
+                                                ContextMenu="{StaticResource RowMenu.Address}">
                                             <Grid Height="{DynamicResource Size.RowHeight}">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="{Binding Source={x:Static vm:TableColumns.Instance}, Path=[trace.0]}" />
@@ -4134,8 +4147,14 @@
                                 <Button Content="宛先に追加" Command="{Binding AddToTargetsCommand}"
                                         Style="{StaticResource Button.Subtle}" Margin="0,0,6,2" />
                                 <Button Content="CSV で保存" Command="{Binding SaveCommand}"
-                                        Style="{StaticResource Button.Subtle}" Margin="0,0,0,2"
+                                        Style="{StaticResource Button.Subtle}" Margin="0,0,12,2"
                                         ToolTip="スキャン結果(IP・RTT・ホスト名・MAC・ベンダー・開放ポート)を CSV に保存します。" />
+                                <TextBlock Text="絞り込み" Style="{StaticResource Caption}"
+                                           VerticalAlignment="Center" Margin="0,0,5,2" />
+                                <TextBox Width="160" Margin="0,0,0,2"
+                                         Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}"
+                                         FontFamily="{DynamicResource Font.Mono}"
+                                         ToolTip="アドレス・ホスト名・MAC・ベンダーの部分一致で絞り込みます。CSV は絞る前の全行を保存します。" />
                             </WrapPanel>
 
                             <!-- RangeBase.Value は既定が TwoWay。読み取り専用プロパティに繋ぐので OneWay を明示する。
@@ -4325,7 +4344,10 @@
                                                 <ItemsControl ItemsSource="{Binding Records}">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
-                                                            <Grid Margin="0,0,0,3">
+                                                            <!-- 引けたアドレスもそのまま次の道具へ送れる。ItemsControl の行は
+                                                                 地を持たないので、透明を敷いて行のどこでも右クリックが効くようにする -->
+                                                            <Grid Margin="0,0,0,3" Background="Transparent"
+                                                                  ContextMenu="{StaticResource RowMenu.Address}">
                                                                 <Grid.ColumnDefinitions>
                                                                     <ColumnDefinition Width="44" />
                                                                     <ColumnDefinition Width="*" />
@@ -5270,7 +5292,11 @@
                                     Style="{StaticResource Button.Subtle}" Margin="0,0,6,0"
                                     ToolTip="画面の一覧だけ消します。待受は止めず、ファイルのログにも触りません。" />
                             <Button Content="ログのフォルダを開く" Command="{Binding OpenFolderCommand}"
-                                    Style="{StaticResource Button.Subtle}" />
+                                    Style="{StaticResource Button.Subtle}" Margin="0,0,12,0" />
+                            <!-- 絞り込みは syslog と同じ基底の機能。この画面だけ欄を出していなかった -->
+                            <TextBox Width="160" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}"
+                                     FontFamily="{DynamicResource Font.Mono}"
+                                     ToolTip="本文と送信元の部分一致で絞り込みます。待受は止まりません。" />
                         </StackPanel>
 
                         <Border DockPanel.Dock="Top"
@@ -5509,12 +5535,16 @@
                                             Margin="4,4,0,0" />
 
                                     <Grid>
+                                    <!-- 機器一覧に CSV を放り込んでも取り込める（読み込み口はすべて放り込みに
+                                         対応させる決まり。「CSV から取り込む」ボタンと同じ経路に流す） -->
                                     <ListBox x:Name="CollectDeviceList" ItemsSource="{Binding Rows}"
                                              Background="Transparent" BorderThickness="0"
                                              HorizontalContentAlignment="Stretch"
                                              ItemContainerStyle="{StaticResource PlainRowContainer}"
                                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                              VirtualizingPanel.IsVirtualizing="False"
+                                             AllowDrop="True"
+                                             DragOver="OnListDragOver" Drop="OnCollectCsvDrop"
                                          ScrollViewer.VerticalScrollBarVisibility="Visible">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate>
@@ -6347,7 +6377,13 @@
                                                 CommandParameter="faults" Margin="0,0,6,0"
                                                 ToolTip="絞り込みと見出し行の固定を付けた .xlsx で保存します。" />
                                         <Button Content="CSV で保存" Command="{Binding SaveCsvCommand}"
-                                                CommandParameter="faults" Style="{StaticResource Button.Subtle}" />
+                                                CommandParameter="faults" Style="{StaticResource Button.Subtle}" Margin="0,0,12,0" />
+                                        <TextBlock Text="絞り込み" Style="{StaticResource Caption}"
+                                                   VerticalAlignment="Center" Margin="0,0,5,0" />
+                                        <TextBox Width="160"
+                                                 Text="{Binding FaultFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                 FontFamily="{DynamicResource Font.Mono}"
+                                                 ToolTip="重大度・コード・対象・説明の部分一致で絞り込みます。保存は絞る前の全行です。" />
                                     </StackPanel>
 
                                     <Border Background="{DynamicResource Brush.Surface}"
@@ -6848,6 +6884,12 @@
                                     </DockPanel>
                                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
                                         <Button Content="エンドポイントを取得" Command="{Binding FetchEndpointsCommand}" Margin="0,0,12,0" />
+                                        <TextBlock Text="絞り込み" Style="{StaticResource Caption}"
+                                                   VerticalAlignment="Center" Margin="0,0,5,0" />
+                                        <TextBox Width="160" Margin="0,0,12,0"
+                                                 Text="{Binding EndpointFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                 FontFamily="{DynamicResource Font.Mono}"
+                                                 ToolTip="MAC・IP・テナント・EPG・VLAN・ノード・ポートの部分一致で絞り込みます。保存は絞る前の全行です。" />
                                         <Button Content="Excel で保存" Command="{Binding SaveXlsxCommand}"
                                                 CommandParameter="endpoint" Margin="0,0,6,0"
                                                 ToolTip="絞り込みと見出し行の固定を付けた .xlsx で保存します。" />
