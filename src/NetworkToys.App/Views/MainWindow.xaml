@@ -5368,7 +5368,7 @@
                         <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                             <Button Content="宛先リストから選ぶ" Command="{Binding ImportFromTargetsCommand}"
                                     Style="{StaticResource Button.Subtle}" Margin="0,0,6,2"
-                                    ToolTip="Ping と TCP のタブに登録してある宛先から、取り込む相手を選びます。" />
+                                    ToolTip="いまの宛先と、名前を付けて残したリスト(Ping / TCP)から、取り込む相手を選びます。" />
                             <Button Content="CSV から取り込む" Command="{Binding ImportCsvCommand}"
                                     Style="{StaticResource Button.Subtle}" Margin="0,0,6,2"
                                     ToolTip="機器の一覧を CSV ファイルから読み込みます。書き方は「CSV のひな型を保存」で確かめられます。" />
