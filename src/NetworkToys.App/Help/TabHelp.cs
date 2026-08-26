@@ -227,6 +227,9 @@ internal static class TabHelp
         ・経路の見張りは ECMP の誤検知を避けるため、2 回続けて変わったときだけ「変化」とする
         ・Path MTU にはブラックホールがある。ICMP を返さないルータがあると
         　「大きすぎる」ではなく「無応答」になるので、両者は書き分けている
+
+        できる操作
+        ・ホップの行を右クリック → 経路上のルータを Ping・DNS 解決へ送れる
         """;
 
     /// <summary>スキャン</summary>
@@ -256,6 +259,7 @@ internal static class TabHelp
         できる操作
         ・見つけた相手を、そのまま Ping の宛先へ追加する
         ・行を右クリック → SSH/Telnet 接続・経路調査・ログ採取の機器への追加もできる
+        ・「絞り込み」で、アドレス・ホスト名・MAC・ベンダーから目当ての 1 台を探せる
         """;
 
     /// <summary>DNS</summary>
@@ -272,6 +276,9 @@ internal static class TabHelp
 
         対応するレコード
         ・A ／ AAAA ／ CNAME ／ MX ／ NS ／ TXT ／ SOA ／ SRV ／ PTR
+
+        できる操作
+        ・結果の行を右クリック → 引けたアドレスを Ping・Traceroute へ送れる
         """;
 
     /// <summary>通信状況</summary>
@@ -502,6 +509,10 @@ internal static class TabHelp
         ・情報レベルは既定で除いている（入れると数千行になり、重いものが埋もれる）
         ・「対象」は DN。長いので、全文はマウスを載せると出る
         ・「確認」は APIC 側で確認応答済みかどうか。ここからは変えられない
+
+        できる操作
+        ・「絞り込み」で、重大度・コード・対象・説明から探せる
+        ・一覧を Excel（絞り込み付き）か CSV で保存する
         """;
 
     /// <summary>ACI ─ ポート</summary>
@@ -568,6 +579,7 @@ internal static class TabHelp
         ・右クリックから、その IP を Ping や経路などへ送れる
 
         できる操作
+        ・「絞り込み」で、MAC・IP・テナント・EPG・ノード・ポートから探せる
         ・一覧を Excel（絞り込み付き）か CSV で保存する
         """;
 
@@ -740,6 +752,7 @@ internal static class TabHelp
         ・拠点から外へ出られない、という申告の切り分けは、まずここから
 
         できる操作
+        ・行を右クリック → 回線の IP を Ping や経路調査へ渡す
         ・一覧を Excel（絞り込み付き）か CSV で保存する
         """;
 
@@ -762,6 +775,7 @@ internal static class TabHelp
 
         できる操作
         ・行を右クリック → Ping や経路調査へ渡す
+        ・「絞り込み」で、拠点・名前・IP・MAC・VLAN・メーカーから探せる
         ・一覧を Excel（絞り込み付き）か CSV で保存する
 
         知っておくとよいこと
@@ -909,5 +923,6 @@ internal static class TabHelp
 
         できる操作
         ・行を右クリック → 送信元の IP を Ping や経路調査へ渡せる
+        ・「絞り込み」で、本文と送信元から探せる（syslog と同じ）
         """;
 }

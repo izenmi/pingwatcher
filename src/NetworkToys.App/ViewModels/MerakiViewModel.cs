@@ -114,6 +114,36 @@ public sealed class MerakiViewModel : ObservableObject, IDisposable
     public ObservableCollection<MerakiUplinkRow> UplinkRows { get; } = [];
     public ObservableCollection<MerakiClientRow> ClientRows { get; } = [];
 
+    /// <summary>
+    /// クライアント一覧の絞り込み。数百台になる画面なので、目当ての 1 台を探せるように。
+    /// 行を collection から抜かずに <see cref="System.ComponentModel.ICollectionView"/> で
+    /// 隠す（Ping の絞り込みと同じやり方）。CSV 書き出しは絞る前の全行のまま。
+    /// </summary>
+    public string ClientFilter
+    {
+        get => _clientFilter;
+        set
+        {
+            if (!SetProperty(ref _clientFilter, value)) return;
+
+            System.ComponentModel.ICollectionView view =
+                System.Windows.Data.CollectionViewSource.GetDefaultView(ClientRows);
+
+            // 絞り込みが空のときは述語ごと外す（毎行の判定を走らせない）
+            view.Filter = _clientFilter.Length == 0 ? null : o => MatchesClient((MerakiClientRow)o);
+        }
+    }
+
+    private string _clientFilter = string.Empty;
+
+    private bool MatchesClient(MerakiClientRow row)
+        => row.Network.Contains(_clientFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Description.Contains(_clientFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Ip.Contains(_clientFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Mac.Contains(_clientFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Vlan.Contains(_clientFilter, StringComparison.OrdinalIgnoreCase)
+        || row.Manufacturer.Contains(_clientFilter, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>導入時確認の判定。</summary>
     public ObservableCollection<MerakiCheckRow> CheckRows { get; } = [];
 

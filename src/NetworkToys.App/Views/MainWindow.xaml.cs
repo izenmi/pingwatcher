@@ -1585,8 +1585,18 @@ public partial class MainWindow : Window
             NetworkToys.Core.Net.WfpBlockedRow wfp => wfp.Remote,
             NetworkToys.Core.Cloud.MerakiDeviceRow device => device.LanIp,
             NetworkToys.Core.Cloud.MerakiClientRow client => client.Ip,
+            NetworkToys.Core.Cloud.MerakiUplinkRow uplink => uplink.Ip,
             NetworkToys.Core.Fabric.AciEndpointRow endpoint => endpoint.Ip,
             FileServerLogRow log => log.Remote,
+
+            // 応答の無いホップは「* * *」。宛先にはできない
+            TraceHopViewModel hop => hop.Responded ? hop.Address : string.Empty,
+
+            // 値がアドレスかホスト名のレコードだけ。TXT や SOA の値は宛先にならず、
+            // MX は「10 mail.example.com」のように優先度が混ざる
+            Services.DnsRecordLine dns when dns.Type is "A" or "AAAA" or "CNAME" or "NS" or "PTR"
+                => dns.Value,
+
             _ => string.Empty,
         };
 
@@ -1916,6 +1926,23 @@ public partial class MainWindow : Window
         }
 
         _shell.Verify.LoadItemsFrom(text, System.IO.Path.GetFileName(files[0]));
+    }
+
+    /// <summary>ログ採取の機器一覧に放り込まれた CSV を、「CSV から取り込む」と同じ経路で読む。</summary>
+    private void OnCollectCsvDrop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+
+        string[] files = Services.DroppedText.FilesOf(e);
+        if (files.Length == 0) return;
+
+        if (Services.DroppedText.TryRead(files[0], out string problem) is not { } text)
+        {
+            ShowNotice(problem, isProblem: true);
+            return;
+        }
+
+        _shell.Collect.ImportCsvText(text);
     }
 
     /// <summary>掴んでいる試験項目の行。掴んでいなければ null。</summary>

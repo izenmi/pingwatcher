@@ -82,6 +82,34 @@ public sealed class ScanViewModel : ObservableObject
 
     public ObservableCollection<ScanRowViewModel> Results { get; } = [];
 
+    /// <summary>
+    /// 結果の絞り込み。数百台の現場で目当ての 1 台を探すための欄。
+    /// 行を collection から抜かずに <see cref="System.ComponentModel.ICollectionView"/> で
+    /// 隠す（Ping の絞り込みと同じやり方）。
+    /// </summary>
+    public string Filter
+    {
+        get => _filter;
+        set
+        {
+            if (!SetProperty(ref _filter, value)) return;
+
+            System.ComponentModel.ICollectionView view =
+                System.Windows.Data.CollectionViewSource.GetDefaultView(Results);
+
+            // 絞り込みが空のときは述語ごと外す（毎行の判定を走らせない）
+            view.Filter = _filter.Length == 0 ? null : o => Matches((ScanRowViewModel)o);
+        }
+    }
+
+    private string _filter = string.Empty;
+
+    private bool Matches(ScanRowViewModel row)
+        => row.Address.Contains(_filter, StringComparison.OrdinalIgnoreCase)
+        || row.HostName.Contains(_filter, StringComparison.OrdinalIgnoreCase)
+        || row.Mac.Contains(_filter, StringComparison.OrdinalIgnoreCase)
+        || row.Vendor.Contains(_filter, StringComparison.OrdinalIgnoreCase);
+
     public RelayCommand ScanCommand { get; }
     public RelayCommand CancelCommand { get; }
     public RelayCommand AddToTargetsCommand { get; }

@@ -1283,6 +1283,25 @@ internal static class SelfTest
 
                 (new ViewModels.FileServerLogRow("10:00:00", "10.1.1.1", "%LINK-3-UPDOWN", 3), "10.1.1.1"),
 
+                (new Core.Cloud.MerakiUplinkRow(
+                    "本社", "Q2QN", "wan1", "アクティブ", Core.Net.ConnectionStateKind.Ok,
+                    "203.0.113.10", "203.0.113.1", "198.51.100.10"), "203.0.113.10"),
+
+                (new ViewModels.TraceHopViewModel(new Services.TraceHop(
+                    3, IPAddress.Parse("10.0.0.1"), 12.3, false, System.Net.NetworkInformation.IPStatus.TtlExpired)),
+                 "10.0.0.1"),
+
+                // 応答の無いホップは「* * *」。宛先にはできない
+                (new ViewModels.TraceHopViewModel(new Services.TraceHop(
+                    4, null, null, false, System.Net.NetworkInformation.IPStatus.TimedOut)), ""),
+
+                (new Services.DnsRecordLine("A", "www.example.jp", "192.0.2.10", 300), "192.0.2.10"),
+                (new Services.DnsRecordLine("CNAME", "www.example.jp", "web.example.jp", 300), "web.example.jp"),
+
+                // TXT や MX の値は宛先にならない（MX は優先度が混ざる）
+                (new Services.DnsRecordLine("MX", "example.jp", "10 mail.example.jp", 300), ""),
+                (new Services.DnsRecordLine("TXT", "example.jp", "v=spf1 -all", 300), ""),
+
                 // 見覚えのない型は空。落ちてはいけない
                 (new object(), ""),
             ];
