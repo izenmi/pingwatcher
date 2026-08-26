@@ -47,6 +47,41 @@ public class AciConfigExportTests
         Assert.NotEqual("", one.Trim());
     }
 
+    /// <summary>
+    /// dn も name も持たない子（fvRsPathAtt は tDn が識別子）の並びだけを入れ替えた同じ設定。
+    /// テナントの枝を丸ごと取ると、子は dn を持たずに返るのが普通で、
+    /// クラス → dn → 名前の鍵ではここが同点になり、APIC の返した順が漏れていた。
+    /// </summary>
+    [Fact]
+    public void 識別子が_name_でない子の並びが入れ替わっても同じ文字になる()
+    {
+        const string one = """
+            {"totalCount":"1","imdata":[
+              {"fvAEPg":{"attributes":{"name":"Web"},
+               "children":[
+                 {"fvRsPathAtt":{"attributes":{"tDn":"topology/pod-1/paths-101/pathep-[eth1/1]","encap":"vlan-10"}}},
+                 {"fvRsPathAtt":{"attributes":{"tDn":"topology/pod-1/paths-102/pathep-[eth1/2]","encap":"vlan-10"}}},
+                 {"fvSubnet":{"attributes":{"ip":"10.0.0.1/24"}}},
+                 {"fvSubnet":{"attributes":{"ip":"10.0.1.1/24"}}}]}}
+            ]}
+            """;
+
+        const string other = """
+            {"totalCount":"1","imdata":[
+              {"fvAEPg":{"attributes":{"name":"Web"},
+               "children":[
+                 {"fvSubnet":{"attributes":{"ip":"10.0.1.1/24"}}},
+                 {"fvRsPathAtt":{"attributes":{"encap":"vlan-10","tDn":"topology/pod-1/paths-102/pathep-[eth1/2]"}}},
+                 {"fvSubnet":{"attributes":{"ip":"10.0.0.1/24"}}},
+                 {"fvRsPathAtt":{"attributes":{"encap":"vlan-10","tDn":"topology/pod-1/paths-101/pathep-[eth1/1]"}}}]}}
+            ]}
+            """;
+
+        Assert.Equal(
+            AciConfigExport.Render("", AciMoReader.Parse(one)),
+            AciConfigExport.Render("", AciMoReader.Parse(other)));
+    }
+
     [Fact]
     public void 親子の入れ子が字下げで出る()
     {

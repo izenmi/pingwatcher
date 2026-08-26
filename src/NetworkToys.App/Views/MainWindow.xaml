@@ -7409,12 +7409,15 @@
                                                            Text="{Binding BeforeLabel}" />
                                                 <Border DockPanel.Dock="Top" Height="1" Margin="0,0,0,2"
                                                         Background="{DynamicResource Brush.Border}" />
-                                                <!-- 読むだけ。取れたことがその場で見えるように出している -->
-                                                <TextBox Text="{Binding BeforeText, Mode=OneWay}"
-                                                         IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                                                <!-- 手で書き換えられる（2026-08-23 ユーザー指示）。「作業前を保存」で
+                                                     残した控えを貼って今と比べられるように。ファイルの放り込みも受ける -->
+                                                <TextBox x:Name="AciBeforeBox"
+                                                         Text="{Binding BeforeText, UpdateSourceTrigger=PropertyChanged}"
                                                          FontFamily="{DynamicResource Font.Mono}"
                                                          FontSize="{DynamicResource Size.Caption}"
                                                          AcceptsReturn="True" TextWrapping="NoWrap"
+                                                         AllowDrop="True"
+                                                         PreviewDragOver="OnTextDragOver" Drop="OnTextDrop"
                                                          VerticalScrollBarVisibility="Auto"
                                                          HorizontalScrollBarVisibility="Auto"
                                                          VerticalContentAlignment="Top" />
@@ -7430,12 +7433,14 @@
                                                            Text="{Binding AfterLabel}" />
                                                 <Border DockPanel.Dock="Top" Height="1" Margin="0,0,0,2"
                                                         Background="{DynamicResource Brush.Border}" />
-                                                <!-- 読むだけ。取れたことがその場で見えるように出している -->
-                                                <TextBox Text="{Binding AfterText, Mode=OneWay}"
-                                                         IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                                                <!-- こちらも手で書き換えられる（作業前の欄と同じ理由） -->
+                                                <TextBox x:Name="AciAfterBox"
+                                                         Text="{Binding AfterText, UpdateSourceTrigger=PropertyChanged}"
                                                          FontFamily="{DynamicResource Font.Mono}"
                                                          FontSize="{DynamicResource Size.Caption}"
                                                          AcceptsReturn="True" TextWrapping="NoWrap"
+                                                         AllowDrop="True"
+                                                         PreviewDragOver="OnTextDragOver" Drop="OnTextDrop"
                                                          VerticalScrollBarVisibility="Auto"
                                                          HorizontalScrollBarVisibility="Auto"
                                                          VerticalContentAlignment="Top" />
