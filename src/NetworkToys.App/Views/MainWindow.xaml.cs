@@ -1313,8 +1313,10 @@ public partial class MainWindow : Window
     /// 収集タブへの取り込みと、差分比較の「機器から」の両方で使う。
     /// </summary>
     /// <summary>
-    /// 機器から取得の「宛先から」に出すリスト一覧。いま出ている宛先に加えて、
-    /// 名前を付けて残したリスト(Ping / TCP)全部から選べる(2026-08-21 ユーザー指示)。
+    /// 宛先の選択窓に出すリスト一覧。いま出ている宛先に加えて、名前を付けて残した
+    /// リスト(Ping / TCP)全部から選べる(2026-08-21 ユーザー指示)。差分比較の「宛先から」と
+    /// ログ採取の「宛先リストから選ぶ」の両方がこれを使う — 片方にだけリストの
+    /// メニューが出るのは不揃いだと指摘された(2026-08-23)。
     /// </summary>
     private IReadOnlyList<TargetListSource> AllTargetLists()
     {
@@ -1361,16 +1363,19 @@ public partial class MainWindow : Window
 
     private void ImportTargetsIntoCollect()
     {
-        IReadOnlyList<(string Host, string Memo)> unique = KnownTargets();
+        // いまの宛先だけでなく、名前を付けて残したリスト全部から選べるようにする
+        // (差分比較の「宛先から」と同じ窓)。ログ採取こそ「残しておいた機器の一覧から
+        // 選んで取りに行く」画面なのに、こちらだけリストのメニューが無かった
+        IReadOnlyList<TargetListSource> sources = AllTargetLists();
 
-        if (unique.Count == 0)
+        if (sources.All(s => s.Targets.Count == 0))
         {
             ConfirmDialog.Show(this, "宛先がありません",
-                "Ping と TCP のタブに宛先が登録されていません。先に宛先を登録してください。");
+                "Ping と TCP のタブに宛先が無く、名前を付けて残したリストもありません。先に宛先を登録してください。");
             return;
         }
 
-        IReadOnlyList<(string Host, string Memo)> picked = TargetPickerDialog.Pick(this, unique);
+        IReadOnlyList<(string Host, string Memo)> picked = TargetPickerDialog.Pick(this, sources);
 
         if (picked.Count > 0)
             _shell.Collect.Import(picked);
